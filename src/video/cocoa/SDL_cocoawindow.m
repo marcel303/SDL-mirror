@@ -1106,7 +1106,7 @@ SetWindowStyle(SDL_Window * window, NSUInteger style)
         if (SDL_AddTouch(touchId, "") < 0) {
             return;
         }
-
+		
         const SDL_FingerID fingerId = (SDL_FingerID)(intptr_t)[touch identity];
         float x = [touch normalizedPosition].x;
         float y = [touch normalizedPosition].y;
@@ -1178,6 +1178,14 @@ SetWindowStyle(SDL_Window * window, NSUInteger style)
     self.layer.backgroundColor = NSColor.blackColor.CGColor;
     ScheduleContextUpdates((SDL_WindowData *) _sdlWindow->driverdata);
     SDL_SendWindowEvent(_sdlWindow, SDL_WINDOWEVENT_EXPOSED, 0, 0);
+}
+
+-(void)setLayer:(CALayer*)layer
+{
+	if (layer == nil)
+		return;
+	
+    [super setLayer:layer];
 }
 
 - (void)rightMouseDown:(NSEvent *)theEvent
