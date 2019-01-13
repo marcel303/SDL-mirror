@@ -47,6 +47,7 @@ typedef struct SDL_Finger
     float x;
     float y;
     float pressure;
+    SDL_bool firstMove;
 } SDL_Finger;
 
 /* Used as the device ID for mouse events simulated with touch input */

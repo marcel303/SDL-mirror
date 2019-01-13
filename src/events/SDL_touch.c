@@ -198,6 +198,7 @@ SDL_AddFinger(SDL_Touch *touch, SDL_FingerID fingerid, float x, float y, float p
     finger->x = x;
     finger->y = y;
     finger->pressure = pressure;
+    finger->firstMove = SDL_TRUE;
     return 0;
 }
 
@@ -328,8 +329,10 @@ SDL_SendTouchMotion(SDL_TouchID id, SDL_FingerID fingerid,
         event.tfinger.dx = xrel;
         event.tfinger.dy = yrel;
         event.tfinger.pressure = pressure;
+        event.tfinger.firstMove = finger->firstMove;
         posted = (SDL_PushEvent(&event) > 0);
     }
+    finger->firstMove = SDL_FALSE;
     return posted;
 }
 
