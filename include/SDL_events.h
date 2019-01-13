@@ -442,6 +442,7 @@ typedef struct SDL_TouchFingerEvent
     float dx;           /**< Normalized in the range -1...1 */
     float dy;           /**< Normalized in the range -1...1 */
     float pressure;     /**< Normalized in the range 0...1 */
+    SDL_bool firstMove; /**< True when this is the first finger motion in a series */
 } SDL_TouchFingerEvent;
 
 
