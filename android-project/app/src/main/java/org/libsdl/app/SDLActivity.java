@@ -70,8 +70,6 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     public static NativeState mNextNativeState;
     public static NativeState mCurrentNativeState;
 
-    public static boolean mExitCalledFromJava;
-
     /** If shared libraries (e.g. SDL or the native application) could not be loaded. */
     public static boolean mBrokenLibraries;
 
@@ -86,7 +84,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     protected static boolean mScreenKeyboardShown;
     protected static ViewGroup mLayout;
     protected static SDLClipboardHandler mClipboardHandler;
-    protected static Hashtable<Integer, Object> mCursors;
+    protected static Hashtable<Integer, PointerIcon> mCursors;
     protected static int mLastCursorID;
     protected static SDLGenericMotionListener_API12 mMotionListener;
     protected static HIDDeviceManager mHIDDeviceManager;
@@ -98,7 +96,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         if (mMotionListener == null) {
             if (Build.VERSION.SDK_INT >= 26) {
                 mMotionListener = new SDLGenericMotionListener_API26();
-            } else 
+            } else
             if (Build.VERSION.SDK_INT >= 24) {
                 mMotionListener = new SDLGenericMotionListener_API24();
             } else {
@@ -176,10 +174,9 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         mTextEdit = null;
         mLayout = null;
         mClipboardHandler = null;
-        mCursors = new Hashtable<Integer, Object>();
+        mCursors = new Hashtable<Integer, PointerIcon>();
         mLastCursorID = 0;
         mSDLThread = null;
-        mExitCalledFromJava = false;
         mBrokenLibraries = false;
         mIsResumedCalled = false;
         mIsSurfaceReady = false;
@@ -195,6 +192,12 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         Log.v(TAG, "Model: " + Build.MODEL);
         Log.v(TAG, "onCreate()");
         super.onCreate(savedInstanceState);
+
+        try {
+            Thread.currentThread().setName("SDLActivity");
+        } catch (Exception e) {
+            Log.v(TAG, "modify thread properties failed " + e.toString());
+        }
 
         // Load shared libraries
         String errorMsgBrokenLib = "";
@@ -260,6 +263,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
 
         // Get our current screen orientation and pass it down.
         mCurrentOrientation = SDLActivity.getCurrentOrientation();
+        // FIXME: with only one activity, SDL Thread is not yet started and this onNativeOrientationChanged() is ignored
         SDLActivity.onNativeOrientationChanged(mCurrentOrientation);
 
         setContentView(mLayout);
@@ -326,15 +330,15 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
             case Surface.ROTATION_0:
                 result = SDL_ORIENTATION_PORTRAIT;
                 break;
-    
+
             case Surface.ROTATION_90:
                 result = SDL_ORIENTATION_LANDSCAPE;
                 break;
-    
+
             case Surface.ROTATION_180:
                 result = SDL_ORIENTATION_PORTRAIT_FLIPPED;
                 break;
-    
+
             case Surface.ROTATION_270:
                 result = SDL_ORIENTATION_LANDSCAPE_FLIPPED;
                 break;
@@ -386,34 +390,25 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
 
         if (SDLActivity.mBrokenLibraries) {
            super.onDestroy();
-           // Reset everything in case the user re opens the app
-           SDLActivity.initialize();
            return;
         }
 
-        mNextNativeState = NativeState.PAUSED;
-        SDLActivity.handleNativeState();
-
-        // Send a quit message to the application
-        SDLActivity.mExitCalledFromJava = true;
-        SDLActivity.nativeQuit();
-
-        // Now wait for the SDL thread to quit
         if (SDLActivity.mSDLThread != null) {
+
+            // Send Quit event to "SDLThread" thread
+            SDLActivity.nativeSendQuit();
+
+            // Wait for "SDLThread" thread to end
             try {
                 SDLActivity.mSDLThread.join();
             } catch(Exception e) {
-                Log.v(TAG, "Problem stopping thread: " + e);
+                Log.v(TAG, "Problem stopping SDLThread: " + e);
             }
-            SDLActivity.mSDLThread = null;
-
-            //Log.v(TAG, "Finished waiting for SDL thread");
         }
 
-        super.onDestroy();
+        SDLActivity.nativeQuit();
 
-        // Reset everything in case the user re opens the app
-        SDLActivity.initialize();
+        super.onDestroy();
     }
 
     @Override
@@ -490,9 +485,12 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
 
         // Try a transition to paused state
         if (mNextNativeState == NativeState.PAUSED) {
-            nativePause();
-            if (mSurface != null)
+            if (mSDLThread != null) {
+                nativePause();
+            }
+            if (mSurface != null) {
                 mSurface.handlePause();
+            }
             mCurrentNativeState = mNextNativeState;
             return;
         }
@@ -517,19 +515,11 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         }
     }
 
-    /* The native thread has finished */
-    public static void handleNativeExit() {
-        SDLActivity.mSDLThread = null;
-        if (mSingleton != null) {
-            mSingleton.finish();
-        }
-    }
-
-
     // Messages from the SDLMain thread
     static final int COMMAND_CHANGE_TITLE = 1;
     static final int COMMAND_CHANGE_WINDOW_STYLE = 2;
     static final int COMMAND_TEXTEDIT_HIDE = 3;
+    static final int COMMAND_CHANGE_SURFACEVIEW_FORMAT = 4;
     static final int COMMAND_SET_KEEP_SCREEN_ON = 5;
 
     protected static final int COMMAND_USER = 0x8000;
@@ -627,6 +617,32 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
                 }
                 break;
             }
+            case COMMAND_CHANGE_SURFACEVIEW_FORMAT:
+            {
+                int format = ((int)msg.obj);
+                int pf;
+
+                if (SDLActivity.mSurface == null) {
+                    return;
+                }
+
+                SurfaceHolder holder = SDLActivity.mSurface.getHolder();
+                if (holder == null) {
+                    return;
+                }
+
+                if (format == 1) {
+                    pf = PixelFormat.RGBA_8888;
+                } else if (format == 2) {
+                    pf = PixelFormat.RGBX_8888;
+                } else {
+                    pf = PixelFormat.RGB_565;
+                }
+
+                holder.setFormat(pf);
+
+                break;
+            }
             default:
                 if ((context instanceof SDLActivity) && !((SDLActivity) context).onUnhandledMessage(msg.arg1, msg.obj)) {
                     Log.e(TAG, "error handling message, command is " + msg.arg1);
@@ -704,6 +720,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     public static native int nativeSetupJNI();
     public static native int nativeRunMain(String library, String function, Object arguments);
     public static native void nativeLowMemory();
+    public static native void nativeSendQuit();
     public static native void nativeQuit();
     public static native void nativePause();
     public static native void nativeResume();
@@ -718,11 +735,13 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
                                             float y, float p);
     public static native void onNativeAccel(float x, float y, float z);
     public static native void onNativeClipboardChanged();
+    public static native void onNativeSurfaceCreated();
     public static native void onNativeSurfaceChanged();
     public static native void onNativeSurfaceDestroyed();
     public static native String nativeGetHint(String name);
     public static native void nativeSetenv(String name, String value);
     public static native void onNativeOrientationChanged(int orientation);
+    public static native void nativeAddTouch(int touchId, String name);
 
     /**
      * This method is called by SDL using JNI.
@@ -1032,23 +1051,28 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         return SDLActivity.mSurface.getNativeSurface();
     }
 
+    /**
+     * This method is called by SDL using JNI.
+     */
+    public static void setSurfaceViewFormat(int format) {
+        mSingleton.sendCommand(COMMAND_CHANGE_SURFACEVIEW_FORMAT, format);
+        return;
+    }
+
     // Input
 
     /**
      * This method is called by SDL using JNI.
-     * @return an array which may be empty but is never null.
      */
-    public static int[] inputGetInputDeviceIds(int sources) {
+    public static void initTouch() {
         int[] ids = InputDevice.getDeviceIds();
-        int[] filtered = new int[ids.length];
-        int used = 0;
+
         for (int i = 0; i < ids.length; ++i) {
             InputDevice device = InputDevice.getDevice(ids[i]);
-            if ((device != null) && ((device.getSources() & sources) != 0)) {
-                filtered[used++] = device.getId();
+            if (device != null && (device.getSources() & InputDevice.SOURCE_TOUCHSCREEN) != 0) {
+                nativeAddTouch(device.getId(), device.getName());
             }
         }
-        return Arrays.copyOf(filtered, used);
     }
 
     // APK expansion files support
@@ -1341,7 +1365,7 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     };
 
     public void onSystemUiVisibilityChange(int visibility) {
-        if (SDLActivity.mFullscreenModeActive && (visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0 || (visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) == 0) {
+        if (SDLActivity.mFullscreenModeActive && ((visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0 || (visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) == 0)) {
 
             Handler handler = getWindow().getDecorView().getHandler();
             if (handler != null) {
@@ -1379,13 +1403,14 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     public static int createCustomCursor(int[] colors, int width, int height, int hotSpotX, int hotSpotY) {
         Bitmap bitmap = Bitmap.createBitmap(colors, width, height, Bitmap.Config.ARGB_8888);
         ++mLastCursorID;
-        // This requires API 24, so use reflection to implement this
-        try {
-            Class PointerIconClass = Class.forName("android.view.PointerIcon");
-            Class[] arg_types = new Class[] { Bitmap.class, float.class, float.class };
-            Method create = PointerIconClass.getMethod("create", arg_types);
-            mCursors.put(mLastCursorID, create.invoke(null, bitmap, hotSpotX, hotSpotY));
-        } catch (Exception e) {
+
+        if (Build.VERSION.SDK_INT >= 24) {
+            try {
+                mCursors.put(mLastCursorID, PointerIcon.create(bitmap, hotSpotX, hotSpotY));
+            } catch (Exception e) {
+                return 0;
+            }
+        } else {
             return 0;
         }
         return mLastCursorID;
@@ -1395,12 +1420,14 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
      * This method is called by SDL using JNI.
      */
     public static boolean setCustomCursor(int cursorID) {
-        // This requires API 24, so use reflection to implement this
-        try {
-            Class PointerIconClass = Class.forName("android.view.PointerIcon");
-            Method setPointerIcon = SDLSurface.class.getMethod("setPointerIcon", PointerIconClass);
-            setPointerIcon.invoke(mSurface, mCursors.get(cursorID));
-        } catch (Exception e) {
+
+        if (Build.VERSION.SDK_INT >= 24) {
+            try {
+                mSurface.setPointerIcon(mCursors.get(cursorID));
+            } catch (Exception e) {
+                return false;
+            }
+        } else {
             return false;
         }
         return true;
@@ -1449,15 +1476,12 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
             cursor_type = 1002; //PointerIcon.TYPE_HAND;
             break;
         }
-        // This requires API 24, so use reflection to implement this
-        try {
-            Class PointerIconClass = Class.forName("android.view.PointerIcon");
-            Class[] arg_types = new Class[] { Context.class, int.class };
-            Method getSystemIcon = PointerIconClass.getMethod("getSystemIcon", arg_types);
-            Method setPointerIcon = SDLSurface.class.getMethod("setPointerIcon", PointerIconClass);
-            setPointerIcon.invoke(mSurface, getSystemIcon.invoke(null, SDL.getContext(), cursor_type));
-        } catch (Exception e) {
-            return false;
+        if (Build.VERSION.SDK_INT >= 24) {
+            try {
+                mSurface.setPointerIcon(PointerIcon.getSystemIcon(SDL.getContext(), cursor_type));
+            } catch (Exception e) {
+                return false;
+            }
         }
         return true;
     }
@@ -1474,14 +1498,24 @@ class SDLMain implements Runnable {
         String function = SDLActivity.mSingleton.getMainFunction();
         String[] arguments = SDLActivity.mSingleton.getArguments();
 
+        try {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DISPLAY);
+        } catch (Exception e) {
+            Log.v("SDL", "modify thread properties failed " + e.toString());
+        }
+
         Log.v("SDL", "Running main function " + function + " from library " + library);
+
         SDLActivity.nativeRunMain(library, function, arguments);
 
         Log.v("SDL", "Finished main function");
 
-        // Native thread has finished, let's finish the Activity
-        if (!SDLActivity.mExitCalledFromJava) {
-            SDLActivity.handleNativeExit();
+        if (SDLActivity.mSingleton.isFinishing()) {
+            // Activity is already being destroyed
+        } else {
+            // Let's finish the Activity
+            SDLActivity.mSDLThread = null;
+            SDLActivity.mSingleton.finish();
         }
     }
 }
@@ -1547,7 +1581,7 @@ class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
         Log.v("SDL", "surfaceCreated()");
-        holder.setType(SurfaceHolder.SURFACE_TYPE_GPU);
+        SDLActivity.onNativeSurfaceCreated();
     }
 
     // Called when we lose the surface
@@ -1575,23 +1609,6 @@ class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
 
         int sdlFormat = 0x15151002; // SDL_PIXELFORMAT_RGB565 by default
         switch (format) {
-        case PixelFormat.A_8:
-            Log.v("SDL", "pixel format A_8");
-            break;
-        case PixelFormat.LA_88:
-            Log.v("SDL", "pixel format LA_88");
-            break;
-        case PixelFormat.L_8:
-            Log.v("SDL", "pixel format L_8");
-            break;
-        case PixelFormat.RGBA_4444:
-            Log.v("SDL", "pixel format RGBA_4444");
-            sdlFormat = 0x15421002; // SDL_PIXELFORMAT_RGBA4444
-            break;
-        case PixelFormat.RGBA_5551:
-            Log.v("SDL", "pixel format RGBA_5551");
-            sdlFormat = 0x15441002; // SDL_PIXELFORMAT_RGBA5551
-            break;
         case PixelFormat.RGBA_8888:
             Log.v("SDL", "pixel format RGBA_8888");
             sdlFormat = 0x16462004; // SDL_PIXELFORMAT_RGBA8888
@@ -1599,10 +1616,6 @@ class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
         case PixelFormat.RGBX_8888:
             Log.v("SDL", "pixel format RGBX_8888");
             sdlFormat = 0x16261804; // SDL_PIXELFORMAT_RGBX8888
-            break;
-        case PixelFormat.RGB_332:
-            Log.v("SDL", "pixel format RGB_332");
-            sdlFormat = 0x14110801; // SDL_PIXELFORMAT_RGB332
             break;
         case PixelFormat.RGB_565:
             Log.v("SDL", "pixel format RGB_565");
@@ -1677,12 +1690,13 @@ class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
            return;
         }
 
-        /* Surface is ready */
-        SDLActivity.mIsSurfaceReady = true;
-
         /* If the surface has been previously destroyed by onNativeSurfaceDestroyed, recreate it here */
         SDLActivity.onNativeSurfaceChanged();
 
+        /* Surface is ready */
+        SDLActivity.mIsSurfaceReady = true;
+
+        SDLActivity.mNextNativeState = SDLActivity.NativeState.RESUMED;
         SDLActivity.handleNativeState();
     }
 

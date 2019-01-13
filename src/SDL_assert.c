@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2018 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2019 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -178,6 +178,7 @@ SDL_PromptAssertion(const SDL_assert_data *data, void *userdata)
 
     (void) userdata;  /* unused in default handler. */
 
+    /* !!! FIXME: why is this using SDL_stack_alloc and not just "char message[SDL_MAX_LOG_MESSAGE];" ? */
     message = SDL_stack_alloc(char, SDL_MAX_LOG_MESSAGE);
     if (!message) {
         /* Uh oh, we're in real trouble now... */

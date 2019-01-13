@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2018 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2019 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -475,6 +475,7 @@ SDL_EVDEV_init_touchscreen(SDL_evdevlist_item* item)
     }
 
     ret = SDL_AddTouch(item->fd, /* I guess our fd is unique enough */
+        SDL_TOUCH_DEVICE_DIRECT,
         item->touchscreen_data->name);
     if (ret < 0) {
         SDL_free(item->touchscreen_data->slots);

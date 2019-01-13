@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2018 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2019 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -202,13 +202,14 @@ static void UpdateEventsForDeviceRemoval()
 {
     int i, num_events;
     SDL_Event *events;
+    SDL_bool isstack;
 
     num_events = SDL_PeepEvents(NULL, 0, SDL_PEEKEVENT, SDL_CONTROLLERDEVICEADDED, SDL_CONTROLLERDEVICEADDED);
     if (num_events <= 0) {
         return;
     }
 
-    events = SDL_stack_alloc(SDL_Event, num_events);
+    events = SDL_small_alloc(SDL_Event, num_events, &isstack);
     if (!events) {
         return;
     }
@@ -219,7 +220,7 @@ static void UpdateEventsForDeviceRemoval()
     }
     SDL_PeepEvents(events, num_events, SDL_ADDEVENT, 0, 0);
 
-    SDL_stack_free(events);
+    SDL_small_free(events, isstack);
 }
 
 static SDL_bool HasSameOutput(SDL_ExtendedGameControllerBind *a, SDL_ExtendedGameControllerBind *b)
@@ -1307,15 +1308,17 @@ SDL_GameControllerLoadHints()
 
 /*
  * Fill the given buffer with the expected controller mapping filepath. 
- * Usually this will just be CONTROLLER_MAPPING_FILE, but for Android,
- * we want to get the internal storage path.
+ * Usually this will just be SDL_HINT_GAMECONTROLLERCONFIG_FILE, but for
+ * Android, we want to get the internal storage path.
  */
 static SDL_bool SDL_GetControllerMappingFilePath(char *path, size_t size)
 {
-#ifdef CONTROLLER_MAPPING_FILE
-#define STRING(X) SDL_STRINGIFY_ARG(X)
-    return SDL_strlcpy(path, STRING(CONTROLLER_MAPPING_FILE), size) < size;
-#elif defined(__ANDROID__)
+    const char *hint = SDL_GetHint(SDL_HINT_GAMECONTROLLERCONFIG_FILE);
+    if (hint && *hint) {
+        return SDL_strlcpy(path, hint, size) < size;
+    }
+
+#if defined(__ANDROID__)
     return SDL_snprintf(path, size, "%s/controller_map.txt", SDL_AndroidGetInternalStoragePath()) < size;
 #else
     return SDL_FALSE;
@@ -1464,6 +1467,13 @@ SDL_bool SDL_ShouldIgnoreGameController(const char *name, SDL_JoystickGUID guid)
     Uint16 product;
     Uint16 version;
     Uint32 vidpid;
+
+#if defined(__LINUX__)
+    if (name && SDL_strstr(name, "Wireless Controller Motion Sensors")) {
+        /* Don't treat the PS4 motion controls as a separate game controller */
+        return SDL_TRUE;
+    }
+#endif
 
     if (SDL_allowed_controllers.num_entries == 0 &&
         SDL_ignored_controllers.num_entries == 0) {

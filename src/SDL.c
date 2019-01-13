@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2018 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2019 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -347,6 +347,12 @@ SDL_WasInit(Uint32 flags)
     int i;
     int num_subsystems = SDL_arraysize(SDL_SubsystemRefCount);
     Uint32 initialized = 0;
+
+    /* Fast path for checking one flag */
+    if (SDL_HasExactlyOneBitSet32(flags)) {
+        int subsystem_index = SDL_MostSignificantBitIndex32(flags);
+        return SDL_SubsystemRefCount[subsystem_index] ? flags : 0;
+    }
 
     if (!flags) {
         flags = SDL_INIT_EVERYTHING;

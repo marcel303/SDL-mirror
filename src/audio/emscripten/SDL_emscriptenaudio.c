@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2018 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2019 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -246,6 +246,7 @@ EMSCRIPTENAUDIO_OpenDevice(_THIS, void *handle, const char *devname, int iscaptu
     }
     SDL_zerop(this->hidden);
 #endif
+    this->hidden = (struct SDL_PrivateAudioData *)0x1;
 
     /* limit to native freq */
     this->spec.freq = EM_ASM_INT_V({ return SDL2.audioContext.sampleRate; });
